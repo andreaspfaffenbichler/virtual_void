@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <memory>
 
+#include "../../include/perfect_hash/table.h"
+
 namespace virtual_void
 {
 //++u+tillities
@@ -222,12 +224,14 @@ public:
 	using dispatch_target_t = void(*)();
 private:
 	using entry_t = std::pair< std::type_index, dispatch_target_t >;
-	using method_table_t = std::vector< entry_t >; // faster than map, slower than hash_map 
+	using method_table_t = std::vector< entry_t >; // faster than map, slower than hash_map
 	method_table_t dispatchTable_;
 	dispatch_target_t default_ = reinterpret_cast< dispatch_target_t >( &throw_not_found );
 	const int v_table_index_ = -1;
+	using perfect_hash_table_t =  perfect_hash::table< std::type_index, dispatch_target_t >;
+	std::unique_ptr< perfect_hash_table_t > phash_;
 public:
-	type_info_dispatch() = default;
+	type_info_dispatch();
 	type_info_dispatch( domain& domain )
 		: v_table_index_( (int)domain.method_dispatches.size() )
 	{ 
@@ -262,11 +266,17 @@ public:
 	template< typename TARGET = dispatch_target_t >
 	TARGET lookup( const std::type_info& type_info ) const
 	{
-		if( auto found = is_defined( type_info ) )
-			return reinterpret_cast< TARGET >( found );
+		if( !phash_ )
+			throw error( "Not sealed." ); 
+		if( auto found = phash_->lookup( type_info ); dispatchTable_[ found ].first == type_info )
+			return reinterpret_cast< TARGET >( dispatchTable_[ found ].second );
 		return reinterpret_cast< TARGET >( default_ );
 	}
 	struct definition{};
+	void seal()
+	{
+		phash_ = std::make_unique< perfect_hash_table_t >( dispatchTable_ );
+	}
 private:
 	auto lower_bound( std::type_index i ) const
 	{
@@ -355,6 +365,10 @@ public:
 	template< typename C > auto is_defined() const
 	{
 		return is_defined( typeid( C ) );
+	}
+	void seal()
+	{
+		methodTable_.seal();
 	}
 private:
 	template< typename CLASS, typename DISPATCH, typename... OTHER_ARGS >
@@ -482,12 +496,13 @@ inline void set_v_table( const class_hierarchy::class_with_bases& class_, const 
 		target = method.get_default();
 	class_.v_table->set_method( method.v_table_index(), target );
 }
-inline void fix_v_tables( const class_hierarchy::classes_with_bases& classes, const type_info_dispatch& method )
+inline void fix_v_tables( const class_hierarchy::classes_with_bases& classes, type_info_dispatch& method )
 {
+	method.seal();
 	for( const auto& class_ : classes )
 		set_v_table( class_.second, method );
 }
-inline void fix_v_tables( const domain& domain )
+inline void fix_v_tables( domain& domain )
 {
 	for( const auto& method : domain.method_dispatches )
 		fix_v_tables( domain.classes, *method );
@@ -500,7 +515,7 @@ template< typename... CLASSES > auto declare_classes( domain& domain )
 {
 	return declare_classes( type_list< CLASSES... >{}, domain );
 }
-inline void build_v_tables( const domain& domain )
+inline void build_v_tables( domain& domain )
 {
 	if( domain.classes.empty() )
 		throw error( "no classes declared." );

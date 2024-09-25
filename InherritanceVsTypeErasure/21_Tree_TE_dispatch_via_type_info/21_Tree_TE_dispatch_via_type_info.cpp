@@ -116,6 +116,10 @@ auto __ = as_lisp.override_< Integer >( []( auto expr ) {
 int main() {
     //build_v_tables( tree_domain ); no v_tabls, dispatch via typeindex(type_info)->"override_" function
 
+    as_forth.seal();
+    as_lisp.seal();
+    value.seal();
+
     using std::make_shared;
 
     auto expr = make_shared<Times>(
